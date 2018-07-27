@@ -1,5 +1,6 @@
 from matplotlib import pyplot as plt
 import math
+import numpy as np
 from keras.callbacks import LambdaCallback
 import keras.backend as K
 
@@ -26,7 +27,7 @@ class LRFinder:
         self.losses.append(loss)
 
         # Check whether the loss got too large or NaN
-        if math.isnan(loss) or loss > self.best_loss * 4:
+        if math.isnan(loss) or loss > np.mean(self.losses[:-1] or [1e9]) * 4:
             self.model.stop_training = True
             return
 
@@ -62,16 +63,25 @@ class LRFinder:
         # Restore the original learning rate
         K.set_value(self.model.optimizer.lr, original_lr)
 
-    def plot_loss(self, n_skip_beginning=10, n_skip_end=5):
+    def plot_loss(self, n_skip_beginning=10, n_skip_end=5, sma=1):
         """
         Plots the loss.
         Parameters:
+            sma - number of batches to smooth out the curve.
             n_skip_beginning - number of batches to skip on the left.
             n_skip_end - number of batches to skip on the right.
         """
+        assert sma >= 1
+        sma = int(sma)
+        end = len(self.losses) - n_skip_end
         plt.ylabel("loss")
         plt.xlabel("learning rate (log scale)")
-        plt.plot(self.lrs[n_skip_beginning:-n_skip_end], self.losses[n_skip_beginning:-n_skip_end])
+        plt.plot(self.lrs[n_skip_beginning:end], self.losses[n_skip_beginning:end])
+        if sma > 1:
+            if sma > len(self.lrs):
+                sma = len(self.lrs)
+            plt.plot(self.lrs[n_skip_beginning:end], np.convolve(
+                self.losses, [1 / sma] * sma, mode='same')[n_skip_beginning:end])
         plt.xscale('log')
 
     def plot_loss_change(self, sma=1, n_skip_beginning=10, n_skip_end=5, y_lim=(-0.01, 0.01)):
@@ -84,13 +94,20 @@ class LRFinder:
             y_lim - limits for the y axis.
         """
         assert sma >= 1
-        derivatives = [0] * sma
-        for i in range(sma, len(self.lrs)):
-            derivative = (self.losses[i] - self.losses[i - sma]) / sma
+        sma = int(sma)
+        end = len(self.losses) - n_skip_end
+        derivatives = [0]
+        for i in range(1, len(self.lrs)):
+            derivative = (self.losses[i] - self.losses[i - 1])
             derivatives.append(derivative)
 
         plt.ylabel("rate of loss change")
         plt.xlabel("learning rate (log scale)")
-        plt.plot(self.lrs[n_skip_beginning:-n_skip_end], derivatives[n_skip_beginning:-n_skip_end])
+        plt.plot(self.lrs[n_skip_beginning:end], derivatives[n_skip_beginning:end])
+        if sma > 1:
+            if sma > len(self.lrs):
+                sma = len(self.lrs)
+            plt.plot(self.lrs[n_skip_beginning:end], np.convolve(
+                derivatives, [1 / sma] * sma, mode='same')[n_skip_beginning:end])
         plt.xscale('log')
         plt.ylim(y_lim)
